@@ -1,0 +1,15 @@
+[Unit]
+Description=CPLD Manager
+Wants=obmc-mapper.target
+After=obmc-mapper.target
+
+[Service]
+Restart=always
+RestartSec=3
+ExecStart=@bindir@/pld-managerd
+Type=dbus
+BusName=xyz.openbmc_project.PldManager
+SyslogIdentifier=pld-manager
+
+[Install]
+WantedBy=multi-user.target
