@@ -8,9 +8,15 @@ project(
   ]
 )
 
+deps = [
+  dependency('systemd'),
+  dependency('sdbusplus', fallback: ['sdbusplus', 'sdbusplus_dep']),
+]
+
 executable(
   'pld-managerd',
   'src/pld_managerd.cpp',
+  dependencies: deps,
   install : true,
   install_dir: get_option('bindir')
 )
