@@ -47,6 +47,12 @@ namespace cpld
 #define SBTN_SYSRST_EVT_BIT         (1<<2)
 #define UID_BTN_EVT_BIT             (1<<1)
 
+#define BUTTON_LED_CONTROL_REG_0130             0x0130
+#define BMC_SBTN_POWRDOWN_CTL_BIT   (1<<3)
+#define BMC_LBTN_PWRDOWN_CTL_BIT    (1<<2)
+#define BMC_SBTN_POWRON_CTL_BIT     (1<<1)
+#define BMC_SBTN_SYSRST_CTL_BIT     (1<<0)
+
 #define CPU_STATUS_REG_02A1                     0x02A1
 #define CPU0_THERMTRIP_BIT          (1<<7)
 #define CPU_IERR_ERROR_BIT          (1<<6)
@@ -67,6 +73,9 @@ namespace cpld
 #define MEM_STATUS_REG_0311                     0x0311
 #define CPU1_MEMTRIP_BIT            (1<<1)
 #define CPU0_MEMTRIP_BIT            (1<<0)
+
+#define PCH_CONTROL_REG_03A9                    0x03A0
+#define BMC_NMI_CTL_BIT             (1<<6)
 
 
 static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
@@ -169,7 +178,7 @@ boost::container::flat_map<std::string, int> TimerMap = {
 
 static boost::asio::steady_timer pollingTimer(io);
 
-// property names
+// property(dbus) names
 static const std::string powerOkPN = "PowerOk";
 static const std::string cpuCatErrPN = "CpuCatErr";
 static const std::string cpu0FivrFaultPN = "Cpu0FivrFault";
@@ -179,7 +188,7 @@ static const std::string cpu1MemThermalTripPN = "Cpu1MemThermalTrip";
 static const std::string cpu0VrHotPN = "Cpu0VrHot";
 static const std::string cpu1VrHotPN = "Cpu1VrHot";
 
-// signal names
+// signal(dbus) names
 static const std::string uidButtonSN = "UidButton";
 static const std::string shortBtnPowerOnSN = "ShortBtnPowerOn";
 static const std::string longBtnPowerDownSN = "LongBtnPowerDown";
@@ -201,43 +210,62 @@ enum class PropertyType
 struct PropertyMetaData
 {
     PropertyType type;
-    bool state;
     uint8_t regOffset;
 };
 
 boost::container::flat_map<std::string, PropertyMetaData> exposedProp = {
+    /**
+     * @brief Basically mapped to those Read-Only-signals exposed by the CPLD.
+     * 
+     */
+    {powerOkPN, {PropertyType::propety, SYSTEM_PWR_STS_BIT}},
+    {cpuCatErrPN, {PropertyType::propety, CPU_IERR_ERROR_BIT}},
+    {cpu0FivrFaultPN, {PropertyType::propety, CPU0_FIVR_FAULT_BIT}},
+    {cpu1FivrFaultPN, {PropertyType::propety, FM_CPU1_FIVR_FAULT_LVT3_CPLD_BIT}},
+    {cpu0MemThermalTripPN, {PropertyType::propety, CPU0_MEMTRIP_BIT}},
+    {cpu1MemThermalTripPN, {PropertyType::propety, CPU1_MEMTRIP_BIT}},
+    {cpu0VrHotPN, {PropertyType::propety, IRQ_CPU0_VRHOT_N_BIT}},
+    {cpu1VrHotPN, {PropertyType::propety, IRQ_CPU1_VRHOT_N_BIT}},
+    /**
+     * @brief Basically mapped to those Write-Clear-signals exposed by the CPLD.
+     * 
+     */
+    {uidButtonSN, {PropertyType::signal, UID_BTN_EVT_BIT}},
+    {shortBtnPowerOnSN, {PropertyType::signal, SBTN_PWRON_EVT_BIT}},
+    {longBtnPowerDownSN, {PropertyType::signal, LBTN_PWRDOWN_EVT_BIT}},
+    {shortBtnResetSN, {PropertyType::signal, SBTN_SYSRST_EVT_BIT}},
+    {cpuMSMISN, {PropertyType::signal, CPU_MSMI_BIT}},
+    {cpuErr0SN, {PropertyType::signal, CPU_ERR0_BIT}},
+    {cpuErr1SN, {PropertyType::signal, CPU_ERR1_BIT}},
+    {cpuErr2SN, {PropertyType::signal, CPU_ERR2_BIT}},
+    {cpu0ThermalTripSN, {PropertyType::signal, CPU0_THERMTRIP_BIT}},
+    {cpu1ThermalTripSN, {PropertyType::signal, CPU1_THERMTRIP_BIT}}
+};
 
-    {powerOkPN, {PropertyType::propety, false, SYSTEM_PWR_STS_BIT}},
-    {cpuCatErrPN, {PropertyType::propety, false, CPU_IERR_ERROR_BIT}},
-    {cpu0FivrFaultPN, {PropertyType::propety, false, CPU0_FIVR_FAULT_BIT}},
-    {cpu1FivrFaultPN, {PropertyType::propety, false, FM_CPU1_FIVR_FAULT_LVT3_CPLD_BIT}},
-    {cpu0MemThermalTripPN, {PropertyType::propety, false, CPU0_MEMTRIP_BIT}},
-    {cpu1MemThermalTripPN, {PropertyType::propety, false, CPU1_MEMTRIP_BIT}},
-    {cpu0VrHotPN, {PropertyType::propety, false, IRQ_CPU0_VRHOT_N_BIT}},
-    {cpu1VrHotPN, {PropertyType::propety, false, IRQ_CPU1_VRHOT_N_BIT}},
-
-    {uidButtonSN, {PropertyType::signal, false, UID_BTN_EVT_BIT}},
-    {shortBtnPowerOnSN, {PropertyType::signal, false, SBTN_PWRON_EVT_BIT}},
-    {longBtnPowerDownSN, {PropertyType::signal, false, LBTN_PWRDOWN_EVT_BIT}},
-    {shortBtnResetSN, {PropertyType::signal, false, SBTN_SYSRST_EVT_BIT}},
-    {cpuMSMISN, {PropertyType::signal, false, CPU_MSMI_BIT}},
-    {cpuErr0SN, {PropertyType::signal, false, CPU_ERR0_BIT}},
-    {cpuErr1SN, {PropertyType::signal, false, CPU_ERR1_BIT}},
-    {cpuErr2SN, {PropertyType::signal, false, CPU_ERR2_BIT}},
-    {cpu0ThermalTripSN, {PropertyType::signal, false, CPU0_THERMTRIP_BIT}},
-    {cpu1ThermalTripSN, {PropertyType::signal, false, CPU1_THERMTRIP_BIT}}
+boost::container::flat_map<std::string, bool> states = {
+    {powerOkPN, false},
+    {cpuCatErrPN, false},
+    {cpu0FivrFaultPN, false},
+    {cpu1FivrFaultPN, false},
+    {cpu0MemThermalTripPN, false},
+    {cpu1MemThermalTripPN, false},
+    {cpu0VrHotPN, false},
+    {cpu1VrHotPN, false}
 };
 
 static void updateStateProperty(const std::string name, uint8_t regData)
 {
     if (exposedProp[name].type != PropertyType::propety)
+    {
         std::cerr << "Incorrect use of updateStateProperty() on " << name << std::endl;
+        return;
+    }
 
     uint8_t regOffset = exposedProp[name].regOffset;
     bool state = regData & regOffset? true : false;
-    if (exposedProp[name].state != state)
+    if (states[name] != state)
     {
-        exposedProp[name].state = state;
+        states[name] = state;
         platformStatesIfc->set_property(name, state);
         std::string strState = state? "True" : "False";
         std::string logMsg = name + " changes to " + strState;
@@ -248,7 +276,10 @@ static void updateStateProperty(const std::string name, uint8_t regData)
 static void emitSignal(const std::string name, uint8_t regData)
 {
     if (exposedProp[name].type != PropertyType::signal)
-        std::cerr << "Incorrect use of updateStateProperty() on " << name << std::endl;
+    {
+        std::cerr << "Incorrect use of emitSignal() on " << name << std::endl;
+        return;
+    }
 
     uint8_t regOffset = exposedProp[name].regOffset;
     bool asserted = regData & regOffset ? true : false;
@@ -295,11 +326,11 @@ static void poll(void)
         // For a state like cpuCatErr has already asserted, we would need to
         // check if it is desserted now and update latest state to dbus
         // accordingly.
-        || exposedProp[cpuCatErrPN].state
-        || exposedProp[cpu0FivrFaultPN].state
-        || exposedProp[cpu1FivrFaultPN].state
-        || exposedProp[cpu0MemThermalTripPN].state
-        || exposedProp[cpu1MemThermalTripPN].state)
+        || states[cpuCatErrPN]
+        || states[cpu0FivrFaultPN]
+        || states[cpu1FivrFaultPN]
+        || states[cpu0MemThermalTripPN]
+        || states[cpu1MemThermalTripPN])
     {
         /* Checks OPERATE_ALARM_FLAG_BIT + BUTTON_LED_STATUS_REG_0120 sub group */
         if (genReg12Data & OPERATE_ALARM_FLAG_BIT)
@@ -324,9 +355,9 @@ static void poll(void)
             // For a state like cpuCatErr has already asserted, we would need to
             // check if it is desserted now and update latest state to dbus
             // accordingly.
-            || exposedProp[cpuCatErrPN].state
-            || exposedProp[cpu0FivrFaultPN].state
-            || exposedProp[cpu1FivrFaultPN].state)
+            || states[cpuCatErrPN]
+            || states[cpu0FivrFaultPN]
+            || states[cpu1FivrFaultPN])
         {
             regData = 0;
             if (!cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A1, &regData))
@@ -374,8 +405,8 @@ static void poll(void)
 
         /* Checks DIMM_ALARM_FLAG_BIT + MEM_STATUS_REG_0311 sub group */
         if (genReg12Data & DIMM_ALARM_FLAG_BIT
-            || exposedProp[cpu0MemThermalTripPN].state
-            || exposedProp[cpu1MemThermalTripPN].state)
+            || states[cpu0MemThermalTripPN]
+            || states[cpu1MemThermalTripPN])
         {
             regData = 0;
             if (!cpld::readReg(I2CBUSID, ADDR, MEM_STATUS_REG_0311, &regData))
@@ -452,7 +483,7 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[powerOkPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[powerOkPN].state = state;
+    states[powerOkPN] = state;
     platformStatesIfc->register_property(powerOkPN, state);
 
     // Cpu0FivrFault
@@ -463,7 +494,7 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[cpu0FivrFaultPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu0FivrFaultPN].state = state;
+    states[cpu0FivrFaultPN] = state;
     platformStatesIfc->register_property(cpu0FivrFaultPN, state);
 
     // Cpu1FivrFault
@@ -474,7 +505,7 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[cpu1FivrFaultPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu1FivrFaultPN].state = state;
+    states[cpu1FivrFaultPN] = state;
     platformStatesIfc->register_property(cpu1FivrFaultPN, state);
 
     // CpuCatErr
@@ -485,7 +516,7 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[cpuCatErrPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpuCatErrPN].state = state;
+    states[cpuCatErrPN] = state;
     platformStatesIfc->register_property(cpuCatErrPN, state);
 
     // Cpu0MemThermalTrip/Cpu1MemThermalTrip
@@ -496,12 +527,12 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[cpu0MemThermalTripPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu0MemThermalTripPN].state = state;
+    states[cpu0MemThermalTripPN] = state;
     platformStatesIfc->register_property(cpu0MemThermalTripPN, state);
 
     regOffset = exposedProp[cpu1MemThermalTripPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu1MemThermalTripPN].state = state;
+    states[cpu1MemThermalTripPN] = state;
     platformStatesIfc->register_property(cpu1MemThermalTripPN, state);
 
     // Cpu0VrHot/Cpu1VrHot
@@ -512,12 +543,12 @@ int main(int argc, char **argv) {
     }
     regOffset = exposedProp[cpu0VrHotPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu0VrHotPN].state = state;
+    states[cpu0VrHotPN] = state;
     platformStatesIfc->register_property(cpu0VrHotPN, state);
 
     regOffset = exposedProp[cpu1VrHotPN].regOffset;
     state = regData & regOffset ? true : false;
-    exposedProp[cpu1VrHotPN].state = state;
+    states[cpu1VrHotPN] = state;
     platformStatesIfc->register_property(cpu1VrHotPN, state);
 
     platformStatesIfc->initialize();
@@ -544,6 +575,58 @@ int main(int argc, char **argv) {
     platformControlsIfc =
         hostServer.add_interface("/xyz/openbmc_project/cpld/platform_controls",
                                  "xyz.openbmc_project.Cpld.PlatformControls");
+
+    platformControlsIfc->register_method("BmcNmiCtrl", [](){
+        log<level::INFO>("BmcNmiCtrl");
+        if(cpld::writeReg(
+            I2CBUSID, ADDR, PCH_CONTROL_REG_03A9, BMC_NMI_CTL_BIT))
+            log<level::ERR>("Failed to do BmcNmiCtrl.");
+    });
+
+    platformControlsIfc->register_method("ShortBtnPowerDownCtrl", [](){
+        log<level::INFO>("ShortBtnPowerDownCtrl");
+        if(cpld::writeReg(
+            I2CBUSID, ADDR,
+            BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_POWRDOWN_CTL_BIT))
+            log<level::ERR>("Failed to do ShortBtnPowerDownCtrl.");
+    });
+
+    platformControlsIfc->register_method("LongBtnPowerDownCtrl", [](){
+        log<level::INFO>("LongBtnPowerDownCtrl");
+        if(cpld::writeReg(
+            I2CBUSID, ADDR,
+            BUTTON_LED_CONTROL_REG_0130, BMC_LBTN_PWRDOWN_CTL_BIT))
+            log<level::ERR>("Failed to do LongBtnPowerDownCtrl.");
+    });
+
+    platformControlsIfc->register_method("ShortBtnPowerOnCtrl", [](){
+        log<level::INFO>("ShortBtnPowerOnCtrl");
+        if(cpld::writeReg(
+            I2CBUSID, ADDR,
+            BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_POWRON_CTL_BIT))
+            log<level::ERR>("Failed to do ShortBtnPowerOnCtrl.");
+    });
+
+    platformControlsIfc->register_method("ResetCtrl", [](){
+        log<level::INFO>("ResetCtrl");
+        if(cpld::writeReg(
+            I2CBUSID, ADDR,
+            BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_SYSRST_CTL_BIT))
+            log<level::ERR>("Failed to do ResetCtrl.");
+    });
+
+    platformControlsIfc->register_method("ReadCpld", [](uint16_t regOffset){
+        uint8_t data = 0;
+        if(cpld::readReg(I2CBUSID, ADDR, regOffset, &data))
+            log<level::ERR>("Failed to call method ReadCpld.");
+        return data;
+    });
+
+    platformControlsIfc->register_method("WriteCpld",
+        [](uint16_t regOffset, uint8_t data){
+            if(cpld::writeReg(I2CBUSID, ADDR, regOffset, data))
+                log<level::ERR>("Failed to call method WriteCpld.");
+    });
 
     platformControlsIfc->initialize();
 
