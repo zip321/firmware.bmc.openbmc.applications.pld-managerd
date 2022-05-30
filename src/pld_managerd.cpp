@@ -10,6 +10,7 @@
 #include <boost/asio/io_service.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/container/flat_map.hpp>
+#include <gpiod.hpp>
 #include <phosphor-logging/log.hpp>
 #include <sdbusplus/asio/object_server.hpp>
 /*
@@ -448,6 +449,64 @@ static void poll(void)
     });
 }
 
+static bool setGPIOOutput(const std::string& name, const int value,
+                          gpiod::line& gpioLine)
+{
+    // Find the GPIO line
+    gpioLine = gpiod::find_line(name);
+    if (!gpioLine)
+    {
+        std::string errMsg = "Failed to find the " + name + " line";
+        log<level::ERR>(errMsg.c_str());
+        return false;
+    }
+
+    // Request GPIO output to specified value
+    try
+    {
+        gpioLine.request(
+            {"pld_manager", gpiod::line_request::DIRECTION_OUTPUT, {}}, value);
+    }
+    catch (const std::exception&)
+    {
+        std::string errMsg = "Failed to request " + name + " output";
+        log<level::ERR>(errMsg.c_str());
+        return false;
+    }
+
+    std::string logMsg = name + " set to " + std::to_string(value);
+    log<level::INFO>(logMsg.c_str());
+    return true;
+}
+
+static boost::asio::steady_timer heartbeat2CpldTimer(io);
+static void heartbeat2CPLD(gpiod::line& gpioLine)
+{
+    static int value = 0;
+    value = !value;
+    int v = value;
+
+    heartbeat2CpldTimer.expires_after(std::chrono::milliseconds(1000));
+    heartbeat2CpldTimer.async_wait(
+        [&gpioLine, v](const boost::system::error_code ec)
+    {
+        // Set the GPIO line back to the opposite value
+        gpioLine.set_value(v);
+        if (ec)
+        {
+            // operation_aborted is expected if timer is canceled before
+            // completion.
+            if (ec != boost::asio::error::operation_aborted)
+            {
+                std::string errMsg =
+                    "heartbeat2CPLD async_wait failed: " + ec.message();
+                log<level::ERR>(errMsg.c_str());
+            }
+        }
+        heartbeat2CPLD(gpioLine);
+    });
+}
+
 int main(int argc, char **argv) {
     if(argc != 1) {
         std::cout << argv[0] <<  "takes no arguments.\n";
@@ -633,6 +692,20 @@ int main(int argc, char **argv) {
     io.post([&]() {
         poll();
     });
+
+    // Assert BMC ready to CPLD here.
+    // TODO: Shall be moved to pid fan control module
+    gpiod::line gpioLine;
+    setGPIOOutput("BMC_READY_OUT_N", 0, gpioLine);
+
+    // sends BMC hearbeat to CPLD.
+    // TODO: Shall be moved to pid fan control module
+    if (setGPIOOutput("WDT_IN", 0, gpioLine))
+    {
+        io.post([&]() {
+            heartbeat2CPLD(gpioLine);
+        });
+    }
 
     io.run();
 

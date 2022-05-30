@@ -9,6 +9,7 @@ project(
 )
 
 deps = [
+  dependency('libgpiodcxx', fallback: ['libgpiod', 'gpiodcxx_dep'], default_options: ['bindings=cxx']),
   dependency('systemd'),
   dependency('sdbusplus', fallback: ['sdbusplus', 'sdbusplus_dep']),
 ]
