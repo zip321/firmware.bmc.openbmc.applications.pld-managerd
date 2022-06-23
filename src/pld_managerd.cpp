@@ -24,10 +24,19 @@ using namespace phosphor::logging;
 namespace cpld
 {
 
-#define I2CBUSID   0x7
+static constexpr bool debug = false;
+
+#define CMU_CPLD_BUSID   0x7
+#define BUSID      0xB
 #define ADDR       0x20
 
 /* CPLD registers definition */
+
+#define CPLD_VER_B                              0x0005
+#define TEST_REG_0006                           0x0006
+#define CPLD_VER_A                              0x000B
+#define CPLD_VER_MATCH                          0x000C  // 0: match
+
 #define SYSTEM_GENERAL_REG_0012                 0x0012
 #define DIMM_ALARM_FLAG_BIT         (1<<5)              // MEM_STATUS_REG_0311
 #define CPU_ALARM_FLAG_BIT          (1<<4)              // CPU_STATUS_REG_02A1/02A2/02A8/_02A9
@@ -94,8 +103,9 @@ static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
         return -1;
     }
 
-    wbuf[0] = reg & 0xff; //TODO: check if CPLD accepts LSB first.
-    wbuf[1] = reg >> 8;
+    wbuf[0] = (reg & 0xff00) >> 8;
+    wbuf[1] = reg & 0xff;
+
 
     msgs[0].addr = slaveAddr >> 1;
     msgs[0].flags = 0;
@@ -113,11 +123,18 @@ static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
     if (ioctl(busFd, I2C_RDWR, &msgset) < 0) {
         std::cerr
             << "Failed to read " + std::string(busName) + " addr 0x"
-            << std::hex<< slaveAddr << " reg 0x" << std::hex<< reg
+            << std::hex<< slaveAddr << " reg 0x" << std::hex << reg
             << std::endl;
         (void)close(busFd);
         return -1;
     }
+
+    if (debug)
+        std::cout
+            << "read " + std::string(busName) + " addr 0x"
+            << std::hex << int(slaveAddr) << " reg 0x" << std::hex << reg
+            << " with reading 0x" << std::hex << int(*data)
+            << std::endl;
 
     (void)close(busFd);
     return 0;
@@ -138,8 +155,8 @@ static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
         return -1;
     }
 
-    wbuf[0] = reg & 0xff; //TODO: check if CPLD accepts LSB first.
-    wbuf[1] = reg >> 8;
+    wbuf[0] = (reg & 0xff00) >> 8;
+    wbuf[1] = reg & 0x00ff;
     wbuf[2] = data;
 
     msgs[0].addr = slaveAddr >> 1;
@@ -159,6 +176,13 @@ static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
         return -1;
     }
 
+    if (debug)
+        std::cout
+            << "wrtie " + std::string(busName) + " addr 0x"
+            << std::hex << int(slaveAddr) << " reg 0x" << std::hex << reg
+            << " with data 0x" << std::hex << int(data)
+            << std::endl;
+
     (void)close(busFd);
     return 0;
 }
@@ -168,6 +192,7 @@ static int readReg(uint busNo, uint8_t slaveAddr, uint16_t reg, uint8_t* data)
 static boost::asio::io_service io;
 std::shared_ptr<sdbusplus::asio::connection> conn;
 static std::string hostDbusName = "xyz.openbmc_project.Cpld";
+static std::string hostDbusName1 = "xyz.openbmc_project.PldManager";
 
 static std::shared_ptr<sdbusplus::asio::dbus_interface> platformStatesIfc;
 static std::shared_ptr<sdbusplus::asio::dbus_interface> platformEventsIfc;
@@ -301,14 +326,14 @@ static void poll(void)
 
     // PowerOk
     regData = 0;
-    if (!cpld::readReg(I2CBUSID, ADDR, SINGLE_BOARD_GENERAL_POWER_REG_0030, &regData))
+    if (!cpld::readReg(BUSID, ADDR, SINGLE_BOARD_GENERAL_POWER_REG_0030, &regData))
         updateStateProperty(powerOkPN, regData);
     else
         log<level::ERR>("Failed to read Power OK state.");
 
     // Cpu0VrHot/Cpu1VrHot
     regData = 0;
-    if (!cpld::readReg(I2CBUSID, ADDR, POWER_ABNORMAL_REG_0090, &regData))
+    if (!cpld::readReg(BUSID, ADDR, POWER_ABNORMAL_REG_0090, &regData))
     {
         updateStateProperty(cpu0VrHotPN, regData);
         updateStateProperty(cpu1VrHotPN, regData);
@@ -318,7 +343,7 @@ static void poll(void)
 
     /* Chekcs SYSTEM_GENERAL_REG_0012 group */
     uint8_t genReg12Data = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, SYSTEM_GENERAL_REG_0012, &genReg12Data))
+    if (cpld::readReg(BUSID, ADDR, SYSTEM_GENERAL_REG_0012, &genReg12Data))
     {
         log<level::ERR>("Failed to read SYSTEM_GENERAL_REG_0012.");
     }
@@ -337,14 +362,14 @@ static void poll(void)
         if (genReg12Data & OPERATE_ALARM_FLAG_BIT)
         {
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, BUTTON_LED_STATUS_REG_0120, &regData))
+            if (!cpld::readReg(BUSID, ADDR, BUTTON_LED_STATUS_REG_0120, &regData))
             {
                 emitSignal(uidButtonSN, regData);
                 emitSignal(shortBtnPowerOnSN, regData);
                 emitSignal(longBtnPowerDownSN, regData);
                 emitSignal(shortBtnResetSN, regData);
                 // clear events
-                if (cpld::writeReg(I2CBUSID, ADDR, BUTTON_LED_STATUS_REG_0120, 0))
+                if (cpld::writeReg(BUSID, ADDR, BUTTON_LED_STATUS_REG_0120, 0))
                     log<level::ERR>("Failed to clear BUTTON_LED_STATUS_REG_0120.");
             }
             else
@@ -361,7 +386,7 @@ static void poll(void)
             || states[cpu1FivrFaultPN])
         {
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A1, &regData))
+            if (!cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A1, &regData))
             {
                 updateStateProperty(cpuCatErrPN, regData);
                 emitSignal(cpu0ThermalTripSN, regData);
@@ -370,14 +395,14 @@ static void poll(void)
                 emitSignal(cpuErr1SN, regData);
                 emitSignal(cpuErr0SN, regData);
                 // clear events
-                if (cpld::writeReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A1, 0))
+                if (cpld::writeReg(BUSID, ADDR, CPU_STATUS_REG_02A1, 0))
                     log<level::ERR>("Failed to clear CPU_STATUS_REG_02A1.");
             }
             else
                 log<level::ERR>("Failed to read CPU_STATUS_REG_02A1.");
 
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A2, &regData))
+            if (!cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A2, &regData))
             {
                 updateStateProperty(cpu0FivrFaultPN, regData);
             }
@@ -385,18 +410,18 @@ static void poll(void)
                 log<level::ERR>("Failed to read CPU_STATUS_REG_02A2.");
 
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A8, &regData))
+            if (!cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A8, &regData))
             {
                 emitSignal(cpu1ThermalTripSN, regData);
                 // clear events
-                if (cpld::writeReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A8, 0))
+                if (cpld::writeReg(BUSID, ADDR, CPU_STATUS_REG_02A8, 0))
                     log<level::ERR>("Failed to clear CPU_STATUS_REG_02A8.");
             }
             else
                 log<level::ERR>("Failed to read CPU_STATUS_REG_02A8.");
 
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A9, &regData))
+            if (!cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A9, &regData))
             {
                 updateStateProperty(cpu1FivrFaultPN, regData);
             }
@@ -410,7 +435,7 @@ static void poll(void)
             || states[cpu1MemThermalTripPN])
         {
             regData = 0;
-            if (!cpld::readReg(I2CBUSID, ADDR, MEM_STATUS_REG_0311, &regData))
+            if (!cpld::readReg(BUSID, ADDR, MEM_STATUS_REG_0311, &regData))
             {
                 updateStateProperty(cpu0MemThermalTripPN, regData);
                 updateStateProperty(cpu1MemThermalTripPN, regData);
@@ -423,7 +448,7 @@ static void poll(void)
 
     // /* Chekcs SYSTEM_GENERAL_REG_0013 group */
     // uint8_t genReg13Data = 0;
-    // if (cpld::readReg(I2CBUSID, ADDR, SYSTEM_GENERAL_REG_0013, &genReg13Data))
+    // if (cpld::readReg(BUSID, ADDR, SYSTEM_GENERAL_REG_0013, &genReg13Data))
     // {
     //     log<level::ERR>("Failed to read SYSTEM_GENERAL_REG_0013.");
     // }
@@ -492,6 +517,7 @@ static void heartbeat2CPLD(gpiod::line& gpioLine)
     {
         // Set the GPIO line back to the opposite value
         gpioLine.set_value(v);
+
         if (ec)
         {
             // operation_aborted is expected if timer is canceled before
@@ -507,12 +533,52 @@ static void heartbeat2CPLD(gpiod::line& gpioLine)
     });
 }
 
+static void sanityCheck(void)
+{
+    uint8_t regData = 0;
+    cpld::writeReg(BUSID, ADDR, TEST_REG_0006, 0x77);
+    cpld::readReg(BUSID, ADDR, TEST_REG_0006, &regData);
+    std::cout
+            << "CPLD I2C Management Interface: "
+            << ((regData == uint8_t(~(0x77))) ? "ON" : "OFF")
+            << std::endl;
+
+    // MB CPLD version
+    uint8_t versionA = 0xff;
+    uint8_t versionB = 0xff;
+    cpld::readReg(BUSID, ADDR, CPLD_VER_A, &versionA);
+    cpld::readReg(BUSID, ADDR, CPLD_VER_B, &versionB);
+    std::cout
+            << "MB CPLD version (hex): "
+            << std::hex << unsigned(versionA)
+            << "." << std::hex
+            << unsigned(versionB) << std::endl;
+
+    // CMU CPLD version
+    versionA = 0xff;
+    versionB = 0xff;
+    cpld::readReg(CMU_CPLD_BUSID, ADDR, CPLD_VER_A, &versionA);
+    cpld::readReg(CMU_CPLD_BUSID, ADDR, CPLD_VER_B, &versionB);
+    std::cout
+            << "CMU CPLD version (hex): "
+            << std::hex << unsigned(versionA)
+            << "." << std::hex
+            << unsigned(versionB) << std::endl;
+
+    regData = 0xff;
+    cpld::readReg(BUSID, ADDR, CPLD_VER_MATCH, &regData);
+    std::cout
+            << "CPLD version Match: "
+            << ((regData) ? "False" : "True")
+            << std::endl;
+}
+
 int main(int argc, char **argv) {
     if(argc != 1) {
         std::cout << argv[0] <<  "takes no arguments.\n";
         return 1;
     }
-    std::cout << "This is project " << PROJECT_NAME << ".\n";
+    std::cout << "This is project " << PROJECT_NAME << std::endl;
 
     uint8_t regData = 0;
     bool state;
@@ -525,6 +591,7 @@ int main(int argc, char **argv) {
     conn = std::make_shared<sdbusplus::asio::connection>(io);
 
     conn->request_name(hostDbusName.c_str());
+    conn->request_name(hostDbusName1.c_str());
 
     sdbusplus::asio::object_server hostServer =
         sdbusplus::asio::object_server(conn);
@@ -536,7 +603,7 @@ int main(int argc, char **argv) {
 
     // PowerOk
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, SINGLE_BOARD_GENERAL_POWER_REG_0030, &regData))
+    if (cpld::readReg(BUSID, ADDR, SINGLE_BOARD_GENERAL_POWER_REG_0030, &regData))
     {
         log<level::ERR>("Failed to init PowerOK.");
     }
@@ -547,7 +614,7 @@ int main(int argc, char **argv) {
 
     // Cpu0FivrFault
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A2, &regData))
+    if (cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A2, &regData))
     {
         log<level::ERR>("Failed to init Cpu0FivrFault.");
     }
@@ -558,7 +625,7 @@ int main(int argc, char **argv) {
 
     // Cpu1FivrFault
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A9, &regData))
+    if (cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A9, &regData))
     {
         log<level::ERR>("Failed to init Cpu1FivrFault.");
     }
@@ -569,7 +636,7 @@ int main(int argc, char **argv) {
 
     // CpuCatErr
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, CPU_STATUS_REG_02A1, &regData))
+    if (cpld::readReg(BUSID, ADDR, CPU_STATUS_REG_02A1, &regData))
     {
         log<level::ERR>("Failed to init CpuCatErr.");
     }
@@ -580,7 +647,7 @@ int main(int argc, char **argv) {
 
     // Cpu0MemThermalTrip/Cpu1MemThermalTrip
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, MEM_STATUS_REG_0311, &regData))
+    if (cpld::readReg(BUSID, ADDR, MEM_STATUS_REG_0311, &regData))
     {
         log<level::ERR>("Failed to init Cpu0MemThermalTrip/Cpu1MemThermalTrip.");
     }
@@ -596,7 +663,7 @@ int main(int argc, char **argv) {
 
     // Cpu0VrHot/Cpu1VrHot
     regData = 0;
-    if (cpld::readReg(I2CBUSID, ADDR, POWER_ABNORMAL_REG_0090, &regData))
+    if (cpld::readReg(BUSID, ADDR, POWER_ABNORMAL_REG_0090, &regData))
     {
         log<level::ERR>("Failed to init Cpu0VrHot/Cpu1VrHot.");
     }
@@ -638,14 +705,14 @@ int main(int argc, char **argv) {
     platformControlsIfc->register_method("BmcNmiCtrl", [](){
         log<level::INFO>("BmcNmiCtrl");
         if(cpld::writeReg(
-            I2CBUSID, ADDR, PCH_CONTROL_REG_03A9, BMC_NMI_CTL_BIT))
+            BUSID, ADDR, PCH_CONTROL_REG_03A9, BMC_NMI_CTL_BIT))
             log<level::ERR>("Failed to do BmcNmiCtrl.");
     });
 
     platformControlsIfc->register_method("ShortBtnPowerDownCtrl", [](){
         log<level::INFO>("ShortBtnPowerDownCtrl");
         if(cpld::writeReg(
-            I2CBUSID, ADDR,
+            BUSID, ADDR,
             BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_POWRDOWN_CTL_BIT))
             log<level::ERR>("Failed to do ShortBtnPowerDownCtrl.");
     });
@@ -653,7 +720,7 @@ int main(int argc, char **argv) {
     platformControlsIfc->register_method("LongBtnPowerDownCtrl", [](){
         log<level::INFO>("LongBtnPowerDownCtrl");
         if(cpld::writeReg(
-            I2CBUSID, ADDR,
+            BUSID, ADDR,
             BUTTON_LED_CONTROL_REG_0130, BMC_LBTN_PWRDOWN_CTL_BIT))
             log<level::ERR>("Failed to do LongBtnPowerDownCtrl.");
     });
@@ -661,7 +728,7 @@ int main(int argc, char **argv) {
     platformControlsIfc->register_method("ShortBtnPowerOnCtrl", [](){
         log<level::INFO>("ShortBtnPowerOnCtrl");
         if(cpld::writeReg(
-            I2CBUSID, ADDR,
+            BUSID, ADDR,
             BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_POWRON_CTL_BIT))
             log<level::ERR>("Failed to do ShortBtnPowerOnCtrl.");
     });
@@ -669,21 +736,21 @@ int main(int argc, char **argv) {
     platformControlsIfc->register_method("ResetCtrl", [](){
         log<level::INFO>("ResetCtrl");
         if(cpld::writeReg(
-            I2CBUSID, ADDR,
+            BUSID, ADDR,
             BUTTON_LED_CONTROL_REG_0130, BMC_SBTN_SYSRST_CTL_BIT))
             log<level::ERR>("Failed to do ResetCtrl.");
     });
 
     platformControlsIfc->register_method("ReadCpld", [](uint16_t regOffset){
         uint8_t data = 0;
-        if(cpld::readReg(I2CBUSID, ADDR, regOffset, &data))
+        if(cpld::readReg(BUSID, ADDR, regOffset, &data))
             log<level::ERR>("Failed to call method ReadCpld.");
         return data;
     });
 
     platformControlsIfc->register_method("WriteCpld",
         [](uint16_t regOffset, uint8_t data){
-            if(cpld::writeReg(I2CBUSID, ADDR, regOffset, data))
+            if(cpld::writeReg(BUSID, ADDR, regOffset, data))
                 log<level::ERR>("Failed to call method WriteCpld.");
     });
 
@@ -706,6 +773,8 @@ int main(int argc, char **argv) {
             heartbeat2CPLD(gpioLine);
         });
     }
+
+    sanityCheck();
 
     io.run();
 
