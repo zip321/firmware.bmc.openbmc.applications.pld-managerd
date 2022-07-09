@@ -762,11 +762,12 @@ int main(int argc, char **argv) {
 
     // Assert BMC ready to CPLD here.
     // TODO: Shall be moved to pid fan control module
-    gpiod::line gpioLine;
-    setGPIOOutput("BMC_READY_OUT_N", 0, gpioLine);
+    static gpiod::line gpioLineRdy;
+    setGPIOOutput("BMC_READY_OUT_N", 0, gpioLineRdy);
 
     // sends BMC hearbeat to CPLD.
     // TODO: Shall be moved to pid fan control module
+    gpiod::line gpioLine;
     if (setGPIOOutput("WDT_IN", 0, gpioLine))
     {
         io.post([&]() {
